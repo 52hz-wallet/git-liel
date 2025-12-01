@@ -114,23 +114,89 @@ private:
 
         try {
             // Extract startDate and endDate from client request
-            // Expected format: { "startDate": "20251101", "endDate": "20251125" }
+            // Frontend sends: { "pluginArg": {...}, "startDate": "20251101", "endDate": "20251125" }
             std::string startDate;
             std::string endDate;
 
-            if (message.contains("startDate")) {
-                startDate = message["startDate"].get<std::string>();
+            // Log all keys in message for debugging
+            if (message.is_object()) {
+                std::string keys = "Message keys: ";
+                for (auto it = message.begin(); it != message.end(); ++it) {
+                    keys += it.key() + " ";
+                }
+                Tools::Logger::info(keys);
             }
+
+            // Try to get startDate and endDate from top level (expected location)
+            if (message.contains("startDate")) {
+                if (message["startDate"].is_string()) {
+                    startDate = message["startDate"].get<std::string>();
+                    Tools::Logger::info("Found startDate in top level: " + startDate);
+                }
+                else if (message["startDate"].is_number()) {
+                    startDate = std::to_string(message["startDate"].get<int>());
+                    Tools::Logger::info("Found startDate (number) in top level: " + startDate);
+                }
+            }
+            
             if (message.contains("endDate")) {
-                endDate = message["endDate"].get<std::string>();
+                if (message["endDate"].is_string()) {
+                    endDate = message["endDate"].get<std::string>();
+                    Tools::Logger::info("Found endDate in top level: " + endDate);
+                }
+                else if (message["endDate"].is_number()) {
+                    endDate = std::to_string(message["endDate"].get<int>());
+                    Tools::Logger::info("Found endDate (number) in top level: " + endDate);
+                }
+            }
+
+            // If not found in top level, try nested in "arg" object
+            if (startDate.empty() && message.contains("arg") && message["arg"].is_object()) {
+                if (message["arg"].contains("startDate")) {
+                    if (message["arg"]["startDate"].is_string()) {
+                        startDate = message["arg"]["startDate"].get<std::string>();
+                        Tools::Logger::info("Found startDate in arg: " + startDate);
+                    }
+                    else if (message["arg"]["startDate"].is_number()) {
+                        startDate = std::to_string(message["arg"]["startDate"].get<int>());
+                        Tools::Logger::info("Found startDate (number) in arg: " + startDate);
+                    }
+                }
+            }
+
+            if (endDate.empty() && message.contains("arg") && message["arg"].is_object()) {
+                if (message["arg"].contains("endDate")) {
+                    if (message["arg"]["endDate"].is_string()) {
+                        endDate = message["arg"]["endDate"].get<std::string>();
+                        Tools::Logger::info("Found endDate in arg: " + endDate);
+                    }
+                    else if (message["arg"]["endDate"].is_number()) {
+                        endDate = std::to_string(message["arg"]["endDate"].get<int>());
+                        Tools::Logger::info("Found endDate (number) in arg: " + endDate);
+                    }
+                }
+            }
+
+            // Get instanceId from request for response
+            std::string instanceId = "";
+            if (message.contains("pluginArg") && message["pluginArg"].is_object()) {
+                if (message["pluginArg"].contains("instanceId") && 
+                    message["pluginArg"]["instanceId"].is_string()) {
+                    instanceId = message["pluginArg"]["instanceId"].get<std::string>();
+                }
             }
 
             // Validate parameters
             if (startDate.empty() || endDate.empty()) {
-                Tools::Logger::error("Exchange_rate handleClient: startDate or endDate missing.");
-                // Send empty array as response
-                nlohmann::json emptyData = nlohmann::json::array();
-                m_webSocketServer->sendClient(hdl, pluginName, emptyData);
+                Tools::Logger::error("Exchange_rate handleClient: startDate or endDate missing. Message: " + message.dump());
+                // Send empty array as response with proper format
+                nlohmann::json errorResponse;
+                errorResponse["pluginArg"]["name"] = pluginName;
+                if (!instanceId.empty()) {
+                    errorResponse["pluginArg"]["instanceId"] = instanceId;
+                }
+                errorResponse["data"] = nlohmann::json::array();
+                m_webSocketServer->sendClient(hdl, pluginName, errorResponse);
                 return;
             }
 
@@ -178,18 +244,48 @@ private:
                 }
             }
 
+            // Build response message with pluginArg for frontend routing
+            // Frontend expects: { "pluginArg": { "name": "...", "instanceId": "..." }, "data": [...] }
+            nlohmann::json response;
+            
+            // Build response with pluginArg and data
+            response["pluginArg"]["name"] = pluginName;
+            if (!instanceId.empty()) {
+                response["pluginArg"]["instanceId"] = instanceId;
+            }
+            response["data"] = filteredData;
+
+            // Log response before sending
+            Tools::Logger::info("Sending response with " + std::to_string(filteredData.size()) + " records. Response: " + response.dump().substr(0, 500));
+
             // Send filtered json data to client
             if (m_webSocketServer) {
-                m_webSocketServer->sendClient(hdl, pluginName, filteredData);
+                m_webSocketServer->sendClient(hdl, pluginName, response);
+                Tools::Logger::info("Response sent successfully");
+            }
+            else {
+                Tools::Logger::error("Cannot send response: WebSocket server is null");
             }
         }
         catch (const std::exception& e) {
             Tools::Logger::error(std::string("Exchange_rate handleClient exception: ") + e.what());
-            // Send empty array on error
+            // Send empty array on error with proper format
             try {
-                nlohmann::json emptyData = nlohmann::json::array();
+                std::string instanceId = "";
+                if (message.contains("pluginArg") && message["pluginArg"].is_object()) {
+                    if (message["pluginArg"].contains("instanceId") && 
+                        message["pluginArg"]["instanceId"].is_string()) {
+                        instanceId = message["pluginArg"]["instanceId"].get<std::string>();
+                    }
+                }
+                nlohmann::json errorResponse;
+                errorResponse["pluginArg"]["name"] = pluginName;
+                if (!instanceId.empty()) {
+                    errorResponse["pluginArg"]["instanceId"] = instanceId;
+                }
+                errorResponse["data"] = nlohmann::json::array();
                 if (m_webSocketServer) {
-                    m_webSocketServer->sendClient(hdl, pluginName, emptyData);
+                    m_webSocketServer->sendClient(hdl, pluginName, errorResponse);
                 }
             }
             catch (...) {
@@ -198,11 +294,23 @@ private:
         }
         catch (...) {
             Tools::Logger::error("Exchange_rate handleClient unknown exception.");
-            // Send empty array on error
+            // Send empty array on error with proper format
             try {
-                nlohmann::json emptyData = nlohmann::json::array();
+                std::string instanceId = "";
+                if (message.contains("pluginArg") && message["pluginArg"].is_object()) {
+                    if (message["pluginArg"].contains("instanceId") && 
+                        message["pluginArg"]["instanceId"].is_string()) {
+                        instanceId = message["pluginArg"]["instanceId"].get<std::string>();
+                    }
+                }
+                nlohmann::json errorResponse;
+                errorResponse["pluginArg"]["name"] = pluginName;
+                if (!instanceId.empty()) {
+                    errorResponse["pluginArg"]["instanceId"] = instanceId;
+                }
+                errorResponse["data"] = nlohmann::json::array();
                 if (m_webSocketServer) {
-                    m_webSocketServer->sendClient(hdl, pluginName, emptyData);
+                    m_webSocketServer->sendClient(hdl, pluginName, errorResponse);
                 }
             }
             catch (...) {

@@ -1,0 +1,43 @@
+# Build directories
+out/
+build/
+*.dll
+*.exe
+*.ilk
+*.pdb
+*.obj
+*.lib
+
+# Visual Studio files
+.vs/
+.vscode/
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# CMake files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+
+# Packages (large third-party libraries)
+packages/boost_1_78_0/
+packages/OpenSSL-Win64/
+packages/websocketpp-master/
+packages/hiredis-master/
+
+# Plugins build output
+new_plugin/Plugins/*.dll
+new_plugin/Plugins/*.ilk
+new_plugin/Plugins/*.pdb
+
+# DLL files in root
+new_plugin/*.dll
+
+# Temporary files
+*.tmp
+*.log
+*.cache
+
